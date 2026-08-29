@@ -357,10 +357,10 @@ const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
 .fb-root{
-  --ink:#1c2b33; --paper:#eef0ea; --panel:#ffffff; --accent:#2456a6; --accent-soft:#dbe6f5;
-  --positive:#2f7a4f; --positive-soft:#e3f0e8; --negative:#b23a32; --negative-soft:#f7e3e1;
-  --warning:#a86a12; --warning-soft:#f5ead2;
-  --muted:#6b7280; --border:#dcdfd8;
+  --ink:#4a2e1f; --paper:#f7ead6; --panel:#fffaf3; --accent:#d97a4f; --accent-soft:#f3ddc9;
+  --positive:#5c7a44; --positive-soft:#e9edd9; --negative:#c14a3a; --negative-soft:#f7ddd4;
+  --warning:#b8791f; --warning-soft:#f6e7c8;
+  --muted:#8a7360; --border:#e6d6c1;
   font-family:'Inter',system-ui,sans-serif; color:var(--ink); background:var(--paper);
   min-height:100vh; display:flex; width:100%;
 }
@@ -397,7 +397,7 @@ const CSS = `
 .fb-btn:disabled{ opacity:.55; cursor:default; }
 .fb-btn-sm{ padding:6px 11px; font-size:12.5px; }
 
-.fb-input, .fb-select{ border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:13.5px; font-family:inherit; width:100%; background:#fff; color:var(--ink); }
+.fb-input, .fb-select{ border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:13.5px; font-family:inherit; width:100%; background:var(--panel); color:var(--ink); }
 .fb-label{ font-size:12px; color:var(--muted); margin-bottom:4px; display:block; }
 .fb-field{ margin-bottom:12px; }
 
@@ -423,14 +423,14 @@ const CSS = `
   .fb-mobile-nav-item.active{ color:#fff; }
 }
 
-.fb-modal-backdrop{ position:fixed; inset:0; background:rgba(28,43,51,.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:14px; }
-.fb-modal{ background:#fff; border-radius:16px; padding:22px; max-width:460px; width:100%; max-height:88vh; overflow-y:auto; }
+.fb-modal-backdrop{ position:fixed; inset:0; background:rgba(74,46,31,.5); display:flex; align-items:center; justify-content:center; z-index:100; padding:14px; }
+.fb-modal{ background:var(--panel); border-radius:16px; padding:22px; max-width:460px; width:100%; max-height:88vh; overflow-y:auto; }
 .fb-modal-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
 .fb-modal-head h3{ font-family:'Fraunces',serif; font-size:19px; margin:0; }
 
 .fb-tabs{ display:flex; gap:4px; background:var(--paper); padding:4px; border-radius:10px; margin-bottom:16px; }
 .fb-tab{ flex:1; text-align:center; padding:8px; border-radius:7px; font-size:13px; cursor:pointer; color:var(--muted); }
-.fb-tab.active{ background:#fff; color:var(--ink); font-weight:500; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+.fb-tab.active{ background:var(--panel); color:var(--ink); font-weight:500; box-shadow:0 1px 2px rgba(0,0,0,.08); }
 
 .fb-badge{ font-size:11px; padding:3px 9px; border-radius:20px; font-weight:500; white-space:nowrap; }
 .fb-badge.positive{ background:var(--positive-soft); color:var(--positive); }
@@ -448,7 +448,7 @@ const CSS = `
 .fb-month-nav button{ background:var(--panel); border:1px solid var(--border); border-radius:7px; width:30px; height:30px; cursor:pointer; color:var(--ink); }
 
 .fb-checkrow{ display:flex; flex-wrap:wrap; gap:6px; }
-.fb-check-pill{ border:1px solid var(--border); border-radius:20px; padding:5px 12px; font-size:12.5px; cursor:pointer; color:var(--muted); background:#fff; white-space:nowrap; }
+.fb-check-pill{ border:1px solid var(--border); border-radius:20px; padding:5px 12px; font-size:12.5px; cursor:pointer; color:var(--muted); background:var(--panel); white-space:nowrap; }
 .fb-check-pill.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
 
 .fb-pos-row{ display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; }
@@ -464,7 +464,7 @@ const CSS = `
 
 .fb-fixed-expand{ background:var(--accent-soft); border-radius:10px; padding:14px; margin:2px 0 12px; }
 .fb-cat-name-input{ font-family:'Fraunces',serif; font-size:16px; font-weight:600; flex:1; max-width:340px; border:1px solid transparent; background:transparent; padding:4px 6px; border-radius:7px; }
-.fb-cat-name-input:hover, .fb-cat-name-input:focus{ border-color:var(--border); background:#fff; outline:none; }
+.fb-cat-name-input:hover, .fb-cat-name-input:focus{ border-color:var(--border); background:var(--panel); outline:none; }
 `;
 
 /* ============================== KLEINE BAUSTEINE ============================== */
@@ -496,7 +496,7 @@ function BudgetDonut({ plan, ist, size = 148 }) {
   const data = over
     ? [{ name: "Verwendet", value: 1 }]
     : [{ name: "Verwendet", value: usedPct || 0.0001 }, { name: "Übrig", value: 100 - usedPct || 0.0001 }];
-  const colors = over ? ["#b23a32"] : ["#2456a6", "#dbe6f5"];
+  const colors = over ? ["#c14a3a"] : ["#d97a4f", "#f3ddc9"];
   return (
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -872,7 +872,7 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
         <div className="fb-field">
           <label className="fb-label">Position</label>
           {lockPosition ? (
-            <div className="fb-input" style={{ background: "#f5f5f2", color: "var(--muted)" }}>{position}</div>
+            <div className="fb-input" style={{ background: "#f3e8da", color: "var(--muted)" }}>{position}</div>
           ) : (
             <select className="fb-select" value={position} onChange={(e) => setPosition(e.target.value)}>
               {positionsForCat.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
@@ -1566,7 +1566,7 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
           Weitere Familienmitglieder können mit diesem Code beitreten (Registrieren → "Code beitreten").
         </div>
         <div className="fb-pos-row" style={{ alignItems: "center" }}>
-          <div className="fb-input fb-mono" style={{ background: "#f5f5f2", flex: 1 }}>{inviteCode}</div>
+          <div className="fb-input fb-mono" style={{ background: "#f3e8da", flex: 1 }}>{inviteCode}</div>
           <button className="fb-btn fb-btn-secondary" onClick={copyCode}><Copy size={14} /> {copyLabel}</button>
           <button className="fb-btn fb-btn-ghost" onClick={handleRegenerate} disabled={regenLoading}>
             <RefreshCw size={14} /> {regenLoading ? "…" : "Neu generieren"}

@@ -5,21 +5,21 @@ import BudgetApp from "./BudgetApp.jsx";
 
 const CSS = `
 .fb-auth-wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
-  font-family:'Inter',system-ui,sans-serif; background:#eef0ea; color:#1c2b33; }
-.fb-auth-card{ width:100%; max-width:380px; background:#fff; border-radius:16px; padding:28px; border:1px solid #dcdfd8; }
+  font-family:'Inter',system-ui,sans-serif; background:#f7ead6; color:#4a2e1f; }
+.fb-auth-card{ width:100%; max-width:380px; background:#fffaf3; border-radius:16px; padding:28px; border:1px solid #e6d6c1; }
 .fb-auth-title{ font-family:Georgia,serif; font-size:24px; margin:0 0 4px; }
-.fb-auth-sub{ color:#6b7280; font-size:13.5px; margin-bottom:20px; }
+.fb-auth-sub{ color:#8a7360; font-size:13.5px; margin-bottom:20px; }
 .fb-auth-field{ margin-bottom:14px; }
-.fb-auth-label{ font-size:12px; color:#6b7280; display:block; margin-bottom:4px; }
-.fb-auth-input{ width:100%; padding:9px 11px; border-radius:8px; border:1px solid #dcdfd8; font-size:14px; font-family:inherit; }
-.fb-auth-btn{ width:100%; background:#2456a6; color:#fff; border:none; border-radius:8px; padding:10px 0; font-weight:500; cursor:pointer; font-size:14px; }
+.fb-auth-label{ font-size:12px; color:#8a7360; display:block; margin-bottom:4px; }
+.fb-auth-input{ width:100%; padding:9px 11px; border-radius:8px; border:1px solid #e6d6c1; font-size:14px; font-family:inherit; }
+.fb-auth-btn{ width:100%; background:#d97a4f; color:#fff; border:none; border-radius:8px; padding:10px 0; font-weight:500; cursor:pointer; font-size:14px; }
 .fb-auth-btn:disabled{ opacity:.6; cursor:default; }
-.fb-auth-link{ margin-top:14px; background:none; border:none; color:#2456a6; font-size:13px; cursor:pointer; display:block; }
-.fb-auth-error{ color:#b23a32; font-size:13px; margin-bottom:12px; }
-.fb-auth-info{ color:#2f7a4f; font-size:13px; margin-bottom:12px; }
-.fb-auth-tabs{ display:flex; gap:6px; background:#eef0ea; padding:4px; border-radius:10px; margin-bottom:18px; }
-.fb-auth-tab{ flex:1; padding:8px; border-radius:7px; border:none; cursor:pointer; background:transparent; font-size:13.5px; color:#6b7280; }
-.fb-auth-tab.active{ background:#fff; color:#1c2b33; font-weight:500; }
+.fb-auth-link{ margin-top:14px; background:none; border:none; color:#d97a4f; font-size:13px; cursor:pointer; display:block; }
+.fb-auth-error{ color:#c14a3a; font-size:13px; margin-bottom:12px; }
+.fb-auth-info{ color:#5c7a44; font-size:13px; margin-bottom:12px; }
+.fb-auth-tabs{ display:flex; gap:6px; background:#f7ead6; padding:4px; border-radius:10px; margin-bottom:18px; }
+.fb-auth-tab{ flex:1; padding:8px; border-radius:7px; border:none; cursor:pointer; background:transparent; font-size:13.5px; color:#8a7360; }
+.fb-auth-tab.active{ background:#fffaf3; color:#4a2e1f; font-weight:500; }
 `;
 
 function Centered({ children }) {
@@ -34,7 +34,7 @@ function Centered({ children }) {
 function LoadingScreen({ text }) {
   return (
     <Centered>
-      <div style={{ textAlign: "center", color: "#6b7280", fontSize: 14 }}>{text}</div>
+      <div style={{ textAlign: "center", color: "#8a7360", fontSize: 14 }}>{text}</div>
     </Centered>
   );
 }
