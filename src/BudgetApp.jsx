@@ -640,14 +640,14 @@ function CategoriesOverview({ yearBudget, expenses, year, month, openDetails, op
           return (
             <div className="fb-cat-card" key={catId}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
-                  <strong style={{ fontSize: 14 }}>{cat.name}</strong>
+                <strong style={{ fontSize: 14, marginBottom: 6, display: "block" }}>{cat.name}</strong>
+                <ProgressBar plan={d.plan} ist={d.ist} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, gap: 8, flexWrap: "wrap" }}>
+                  <div className="fb-stat-sub" style={{ marginTop: 0 }}>Plan {formatCHF(d.plan)} · Ist {formatCHF(d.ist)}</div>
                   <span className={`fb-badge ${over ? "negative" : "positive"}`}>
                     {formatCHF(d.plan - d.ist)} {over ? "über Budget" : "übrig"}
                   </span>
                 </div>
-                <ProgressBar plan={d.plan} ist={d.ist} />
-                <div className="fb-stat-sub" style={{ marginTop: 5 }}>Plan {formatCHF(d.plan)} · Ist {formatCHF(d.ist)}</div>
               </div>
               <div className="fb-cat-actions">
                 <button className="fb-btn fb-btn-secondary fb-btn-sm" onClick={() => openDetails(catId)}>
@@ -709,14 +709,14 @@ function CategorySubthemes({ catId, yearBudget, expenses, year, month, openBilli
           return (
             <div className="fb-sub-row" key={p.id}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
-                  <strong style={{ fontSize: 13.5 }}>{p.name}</strong>
+                <strong style={{ fontSize: 13.5, marginBottom: 6, display: "block" }}>{p.name}</strong>
+                <ProgressBar plan={p.amount} ist={ist} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 5, gap: 8, flexWrap: "wrap" }}>
+                  <div className="fb-stat-sub" style={{ marginTop: 0 }}>Plan {formatCHF(p.amount)} · Ist {formatCHF(ist)}</div>
                   <span className={`fb-badge ${over ? "negative" : "positive"}`}>
                     {formatCHF(p.amount - ist)} {over ? "über Budget" : "übrig"}
                   </span>
                 </div>
-                <ProgressBar plan={p.amount} ist={ist} />
-                <div className="fb-stat-sub" style={{ marginTop: 5 }}>Plan {formatCHF(p.amount)} · Ist {formatCHF(ist)}</div>
               </div>
               <button className="fb-btn fb-btn-ghost fb-btn-sm" onClick={() => openBilling(catId, p.name)}>
                 <Receipt size={13} /> Abrechnung
