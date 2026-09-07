@@ -51,6 +51,27 @@ export async function insertExpense(exp) {
   return rowToExpense(data);
 }
 
+export async function updateExpenseRow(id, exp) {
+  const householdId = getHouseholdId();
+  if (!householdId) throw new Error("Kein Haushalt ausgewählt.");
+  const { data, error } = await supabase
+    .from("expenses")
+    .update({
+      category_id: exp.categoryId,
+      date: exp.date,
+      position: exp.position,
+      ort: exp.ort,
+      einkaeufer: exp.einkaeufer,
+      betrag: exp.betrag,
+    })
+    .eq("id", id)
+    .eq("household_id", householdId)
+    .select()
+    .single();
+  if (error) throw error;
+  return rowToExpense(data);
+}
+
 export async function removeExpense(id) {
   const householdId = getHouseholdId();
   const { error } = await supabase.from("expenses").delete().eq("id", id).eq("household_id", householdId);

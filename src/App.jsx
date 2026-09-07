@@ -4,8 +4,9 @@ import { setHouseholdId, subscribeRemoteChanges } from "./storage.js";
 import BudgetApp from "./BudgetApp.jsx";
 
 const CSS = `
+.fb-auth-wrap, .fb-auth-wrap *{ box-sizing:border-box; }
 .fb-auth-wrap{ min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px;
-  font-family:'Inter',system-ui,sans-serif; background:#f7ead6; color:#4a2e1f; }
+  font-family:'Inter',system-ui,sans-serif; background:#f7ead6; color:#4a2e1f; overflow-x:hidden; }
 .fb-auth-card{ width:100%; max-width:380px; background:#fffaf3; border-radius:16px; padding:28px; border:1px solid #e6d6c1; }
 .fb-auth-title{ font-family:Georgia,serif; font-size:24px; margin:0 0 4px; }
 .fb-auth-sub{ color:#8a7360; font-size:13.5px; margin-bottom:20px; }

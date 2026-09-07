@@ -1,8 +1,9 @@
-// Netlify Function: nimmt ein Beleg-Foto (Base64) entgegen, schickt es an die
-// Anthropic API und gibt {datum, ort, betrag} zurück. Der API-Key bleibt
-// serverseitig in der Umgebungsvariable ANTHROPIC_API_KEY (Netlify-Einstellungen
-// -> Site configuration -> Environment variables) und wird nie an den Browser
-// ausgeliefert.
+// Netlify Function: nimmt ein Beleg-Foto (Base64) und optional die aktuelle
+// Kategorien-/Positionsstruktur entgegen, schickt es an die Anthropic API und
+// gibt {datum, ort, betrag, kategorie_id, position} zurück. Der API-Key
+// bleibt serverseitig in der Umgebungsvariable ANTHROPIC_API_KEY (Netlify-
+// Einstellungen -> Site configuration -> Environment variables) und wird nie
+// an den Browser ausgeliefert.
 
 export async function handler(event) {
   if (event.httpMethod !== "POST") {
@@ -17,11 +18,12 @@ export async function handler(event) {
     };
   }
 
-  let image, mediaType;
+  let image, mediaType, categories;
   try {
     const body = JSON.parse(event.body || "{}");
     image = body.image;
     mediaType = body.mediaType || "image/jpeg";
+    categories = Array.isArray(body.categories) ? body.categories : [];
   } catch {
     return { statusCode: 400, body: JSON.stringify({ error: "Ungültiger Request-Body." }) };
   }
@@ -29,6 +31,18 @@ export async function handler(event) {
   if (!image) {
     return { statusCode: 400, body: JSON.stringify({ error: "Kein Bild übermittelt." }) };
   }
+
+  const categoryHint = categories.length
+    ? `\n\nHier ist die Liste der verfügbaren Budget-Kategorien mit ihren Unterpositionen (als JSON): ${JSON.stringify(
+        categories
+      )}\nWähle anhand des Geschäfts/der Artikel auf dem Beleg die am besten passende Kategorie und Position aus DIESER Liste aus (kategorie_id = die "id" der Kategorie, position = einer der Werte aus deren "positions"-Liste). Erfinde keine neuen Kategorien oder Positionen. Falls keine wirklich passt, setze beides auf null.`
+    : "";
+
+  const promptText =
+    'Das ist ein Kassenbeleg/eine Quittung. Antworte NUR mit einem JSON-Objekt, ohne Markdown, ohne weiteren Text, im Format ' +
+    '{"datum":"YYYY-MM-DD oder null","ort":"Geschäftsname oder null","betrag":Zahl oder null,"kategorie_id":"string oder null","position":"string oder null"}. ' +
+    "Nimm den Gesamtbetrag (Total) des Belegs." +
+    categoryHint;
 
   try {
     const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -41,16 +55,13 @@ export async function handler(event) {
       body: JSON.stringify({
         // Passe das Modell bei Bedarf an das, was dein API-Key nutzen darf/soll.
         model: "claude-sonnet-5",
-        max_tokens: 300,
+        max_tokens: 400,
         messages: [
           {
             role: "user",
             content: [
               { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
-              {
-                type: "text",
-                text: 'Das ist ein Kassenbeleg/eine Quittung. Antworte NUR mit einem JSON-Objekt, ohne Markdown, ohne weiteren Text, im Format {"datum":"YYYY-MM-DD oder null","ort":"Geschäftsname oder null","betrag":Zahl oder null}. Nimm den Gesamtbetrag (Total) des Belegs.',
-              },
+              { type: "text", text: promptText },
             ],
           },
         ],
@@ -73,7 +84,7 @@ export async function handler(event) {
     try {
       parsed = JSON.parse(clean);
     } catch {
-      parsed = { datum: null, ort: null, betrag: null };
+      parsed = { datum: null, ort: null, betrag: null, kategorie_id: null, position: null };
     }
 
     return {

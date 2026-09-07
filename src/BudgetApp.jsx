@@ -7,9 +7,10 @@ import {
   Bell, Pencil, RotateCcw,
 } from "lucide-react";
 import { storage } from "./storage.js";
-import { listExpenses, insertExpense, removeExpense } from "./expensesApi.js";
+import { listExpenses, insertExpense, removeExpense, updateExpenseRow } from "./expensesApi.js";
 import { updateHouseholdName, regenerateInviteCode, listMembers } from "./householdApi.js";
 import { deleteOwnAccount } from "./accountApi.js";
+import { getMyPersonName, setMyPersonName } from "./myIdentity.js";
 import { supabase } from "./supabaseClient.js";
 
 /* ============================== KONSTANTEN ============================== */
@@ -336,13 +337,13 @@ async function fileToBase64(file) {
   });
 }
 
-async function scanReceipt(base64, mediaType) {
+async function scanReceipt(base64, mediaType, categories) {
   // Ruft die Netlify-Function auf (siehe netlify/functions/scan-receipt.js).
   // Der Anthropic API-Key bleibt serverseitig als Umgebungsvariable, nie im Browser.
   const response = await fetch("/.netlify/functions/scan-receipt", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image: base64, mediaType }),
+    body: JSON.stringify({ image: base64, mediaType, categories: categories || [] }),
   });
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -356,6 +357,7 @@ async function scanReceipt(base64, mediaType) {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap');
 
+.fb-root, .fb-root *{ box-sizing:border-box; }
 .fb-root{
   --ink:#4a2e1f; --paper:#f7ead6; --panel:#fffaf3; --accent:#d97a4f; --accent-soft:#f3ddc9;
   --positive:#5c7a44; --positive-soft:#e9edd9; --negative:#c14a3a; --negative-soft:#f7ddd4;
@@ -363,6 +365,7 @@ const CSS = `
   --muted:#8a7360; --border:#e6d6c1;
   font-family:'Inter',system-ui,sans-serif; color:var(--ink); background:var(--paper);
   min-height:100vh; display:flex; width:100%;
+  overflow-x:hidden;
 }
 .fb-display{ font-family:'Fraunces',Georgia,serif; }
 .fb-mono{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; }
@@ -394,6 +397,7 @@ const CSS = `
 .fb-btn-ghost{ background:transparent; color:var(--muted); border:1px solid var(--border); }
 .fb-btn-danger{ background:var(--negative-soft); color:var(--negative); }
 .fb-btn-icon{ padding:7px; border-radius:7px; }
+.fb-back-btn{ padding:10px 16px; min-height:44px; position:relative; z-index:2; margin-bottom:14px; }
 .fb-btn:disabled{ opacity:.55; cursor:default; }
 .fb-btn-sm{ padding:6px 11px; font-size:12.5px; }
 
@@ -411,7 +415,7 @@ const CSS = `
 
 .fb-cat-card{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 18px; flex-wrap:wrap; }
 .fb-cat-card + .fb-cat-card{ border-top:1px solid var(--border); }
-.fb-cat-actions{ display:flex; gap:8px; }
+.fb-cat-actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
 .fb-mobile-nav{ display:none; }
 
@@ -419,7 +423,7 @@ const CSS = `
   .fb-sidebar{ display:none; }
   .fb-main{ padding:16px 14px calc(88px + env(safe-area-inset-bottom, 0px)); width:100%; }
   .fb-mobile-nav{ display:flex; position:fixed; bottom:0; left:0; right:0; background:var(--ink); padding:6px 12px calc(6px + env(safe-area-inset-bottom, 0px)); justify-content:space-around; z-index:50; }
-  .fb-mobile-nav-item{ display:flex; flex-direction:column; align-items:center; gap:2px; color:rgba(255,255,255,.6); font-size:10px; cursor:pointer; flex:1; padding:6px 0; min-width:0; }
+  .fb-mobile-nav-item{ display:flex; flex-direction:column; align-items:center; gap:2px; color:rgba(255,255,255,.6); font-size:10px; cursor:pointer; flex:1; padding:6px 2px; min-width:0; text-align:center; line-height:1.15; }
   .fb-mobile-nav-item.active{ color:#fff; }
 }
 
@@ -451,9 +455,10 @@ const CSS = `
 .fb-check-pill{ border:1px solid var(--border); border-radius:20px; padding:5px 12px; font-size:12.5px; cursor:pointer; color:var(--muted); background:var(--panel); white-space:nowrap; }
 .fb-check-pill.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
 
-.fb-pos-row{ display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; }
-.fb-pos-row .fb-input{ flex:1; }
-.fb-pos-row .fb-amount{ width:100px; }
+.fb-pos-row{ display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; flex-wrap:wrap; }
+.fb-pos-row .fb-input{ flex:1 1 160px; min-width:160px; }
+.fb-pos-row .fb-amount{ width:100px; flex:0 0 100px; min-width:80px; }
+.fb-pos-row select.fb-select{ flex:1 1 140px; min-width:120px; }
 
 .fb-section-title{ font-family:'Fraunces',serif; font-size:16px; margin:22px 0 10px; }
 
@@ -463,7 +468,7 @@ const CSS = `
 .fb-fixed-row{ display:flex; justify-content:space-between; font-size:13px; padding:6px 0; color:var(--muted); }
 
 .fb-fixed-expand{ background:var(--accent-soft); border-radius:10px; padding:14px; margin:2px 0 12px; }
-.fb-cat-name-input{ font-family:'Fraunces',serif; font-size:16px; font-weight:600; flex:1; max-width:340px; border:1px solid transparent; background:transparent; padding:4px 6px; border-radius:7px; }
+.fb-cat-name-input{ font-family:'Fraunces',serif; font-size:16px; font-weight:600; flex:1 1 180px; min-width:140px; max-width:340px; border:1px solid transparent; background:transparent; padding:4px 6px; border-radius:7px; }
 .fb-cat-name-input:hover, .fb-cat-name-input:focus{ border-color:var(--border); background:var(--panel); outline:none; }
 `;
 
@@ -584,7 +589,7 @@ function Dashboard({ yearBudget, expenses, year, month, setMonth, goCategories, 
 
       {dueReminders.length > 0 && (
         <div className="fb-card" style={{ marginTop: 16, padding: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px 10px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px 10px", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <Bell size={15} style={{ color: "var(--warning)" }} />
               <strong style={{ fontSize: 14 }}>Anstehende Erinnerungen</strong>
@@ -673,11 +678,11 @@ function CategorySubthemes({ catId, yearBudget, expenses, year, month, openBilli
 
   return (
     <div>
+      <button className="fb-btn fb-btn-ghost fb-back-btn" onClick={goBack} type="button">
+        <ArrowLeft size={16} /> Zurück
+      </button>
       <div className="fb-topbar">
         <div>
-          <button className="fb-btn fb-btn-ghost" onClick={goBack} style={{ marginBottom: 10 }}>
-            <ArrowLeft size={14} /> Zurück
-          </button>
           <h1 className="fb-title">{cat?.name || catId}</h1>
           <div className="fb-subtitle">{MONTHS_LONG[month - 1]} {year} · Unterthemen dieser Position</div>
         </div>
@@ -695,7 +700,7 @@ function CategorySubthemes({ catId, yearBudget, expenses, year, month, openBilli
             return (
               <div className="fb-sub-row" key={p.id} style={{ opacity: .85 }}>
                 <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                     <strong style={{ fontSize: 13.5 }}>{p.name}</strong>
                     <span className="fb-badge" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>Fixkosten</span>
                   </div>
@@ -738,11 +743,11 @@ function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExp
 
   return (
     <div>
+      <button className="fb-btn fb-btn-ghost fb-back-btn" onClick={goBack} type="button">
+        <ArrowLeft size={16} /> Zurück
+      </button>
       <div className="fb-topbar">
         <div>
-          <button className="fb-btn fb-btn-ghost" onClick={goBack} style={{ marginBottom: 10 }}>
-            <ArrowLeft size={14} /> Zurück
-          </button>
           <h1 className="fb-title">{getCategoryName(yearBudget, catId)}{position ? ` · ${position}` : ""}</h1>
           <div className="fb-subtitle">Abrechnung — alle erfassten Ausgaben</div>
         </div>
@@ -768,9 +773,14 @@ function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExp
                   <td>{r.position}</td>
                   <td className="fb-mono" style={{ textAlign: "right" }}>{formatCHF(r.betrag)}</td>
                   <td>
-                    <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => deleteExpense(r.id)}>
-                      <Trash2 size={14} />
-                    </button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => openExpenseModal({ editing: r })}>
+                        <Pencil size={14} />
+                      </button>
+                      <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => deleteExpense(r.id)}>
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -784,16 +794,19 @@ function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExp
 
 /* ============================== AUSGABE ERFASSEN (MODAL) ============================== */
 
-function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition, lockCategory, lockPosition, onClose, onSave }) {
+function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition, lockCategory, lockPosition, initial, onClose, onSave }) {
   const categoryIds = Object.keys(yearBudget?.categories || {});
   const [tab, setTab] = useState("manual");
   const [categoryId, setCategoryId] = useState(defaultCategoryId || categoryIds[0]);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(initial?.date || new Date().toISOString().slice(0, 10));
   const positionsForCat = (yearBudget?.categories?.[categoryId]?.positions || []).filter((p) => !p.isFixed);
   const [position, setPosition] = useState(defaultPosition || positionsForCat[0]?.name || "Sonstiges");
-  const [ort, setOrt] = useState("");
-  const [einkaeufer, setEinkaeufer] = useState(persons[0] || "");
-  const [betrag, setBetrag] = useState("");
+  const [ort, setOrt] = useState(initial?.ort || "");
+  const myName = getMyPersonName();
+  const [einkaeufer, setEinkaeufer] = useState(
+    initial?.einkaeufer || (persons.includes(myName) ? myName : persons[0] || "")
+  );
+  const [betrag, setBetrag] = useState(initial ? String(initial.betrag) : "");
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState("");
   const [scanned, setScanned] = useState(false);
@@ -814,10 +827,26 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
     setScanError("");
     try {
       const base64 = await fileToBase64(file);
-      const result = await scanReceipt(base64, file.type || "image/jpeg");
+      const categoryOptions = categoryIds.map((cid) => ({
+        id: cid,
+        name: yearBudget.categories[cid].name,
+        positions: (yearBudget.categories[cid].positions || []).filter((p) => !p.isFixed).map((p) => p.name),
+      }));
+      const result = await scanReceipt(base64, file.type || "image/jpeg", categoryOptions);
       if (result.datum) setDate(result.datum);
       if (result.ort) setOrt(result.ort);
       if (result.betrag != null) setBetrag(String(result.betrag));
+
+      let targetCategoryId = categoryId;
+      if (!lockCategory && result.kategorie_id && yearBudget?.categories?.[result.kategorie_id]) {
+        targetCategoryId = result.kategorie_id;
+        setCategoryId(targetCategoryId);
+      }
+      if (!lockPosition && result.position) {
+        const availablePositions = (yearBudget?.categories?.[targetCategoryId]?.positions || []).filter((p) => !p.isFixed);
+        const match = availablePositions.find((p) => p.name.toLowerCase() === String(result.position).toLowerCase());
+        if (match) setPosition(match.name);
+      }
       setScanned(true);
     } catch (err) {
       setScanError("Beleg konnte nicht automatisch gelesen werden. Bitte manuell ergänzen.");
@@ -835,7 +864,7 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
     <div className="fb-modal-backdrop" onClick={onClose}>
       <div className="fb-modal" onClick={(e) => e.stopPropagation()}>
         <div className="fb-modal-head">
-          <h3>Ausgabe erfassen</h3>
+          <h3>{initial ? "Ausgabe bearbeiten" : "Ausgabe erfassen"}</h3>
           <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={onClose}><X size={16} /></button>
         </div>
 
@@ -851,7 +880,7 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
               {scanning ? <><Loader2 size={15} className="fb-spin" /> Beleg wird gelesen…</> : <><Camera size={15} /> Beleg fotografieren / hochladen</>}
             </button>
             {scanError && <div style={{ color: "var(--negative)", fontSize: 12.5, marginTop: 8 }}>{scanError}</div>}
-            {scanned && !scanError && <div style={{ color: "var(--positive)", fontSize: 12.5, marginTop: 8 }}><Check size={13} style={{ verticalAlign: "-2px" }} /> Daten übernommen — bitte prüfen und Einkäufer/Position ergänzen.</div>}
+            {scanned && !scanError && <div style={{ color: "var(--positive)", fontSize: 12.5, marginTop: 8 }}><Check size={13} style={{ verticalAlign: "-2px" }} /> Daten inkl. Kategorie-Vorschlag übernommen — bitte prüfen.</div>}
           </div>
         )}
 
@@ -897,7 +926,7 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
         </div>
 
         <button className="fb-btn" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} onClick={submit} disabled={!betrag || !ort}>
-          Speichern
+          {initial ? "Aktualisieren" : "Speichern"}
         </button>
       </div>
     </div>
@@ -951,7 +980,7 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
             <label className="fb-label">Aufteilung auf Personen (optional)</label>
             {(p.split || []).map((s, idx) => (
               <div className="fb-pos-row" key={idx}>
-                <select className="fb-select" style={{ flex: 1 }} value={s.person} onChange={(e) => onUpdateSplit(idx, "person", e.target.value)}>
+                <select className="fb-select" style={{ flex: "1 1 140px", minWidth: 120 }} value={s.person} onChange={(e) => onUpdateSplit(idx, "person", e.target.value)}>
                   {persons.map((pn) => <option key={pn} value={pn}>{pn}</option>)}
                 </select>
                 <input className="fb-input fb-amount" type="number" value={s.amount} onChange={(e) => onUpdateSplit(idx, "amount", e.target.value)} />
@@ -966,9 +995,10 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
   );
 }
 
-function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, persistYearBudget, addYear, persons }) {
+function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, persistYearBudget, addYear, persons, expenses, reassignExpenses }) {
   const [draft, setDraft] = useState(yearBudget);
   const [newYearOpen, setNewYearOpen] = useState(false);
+  const [deleteCatModal, setDeleteCatModal] = useState(null);
 
   useEffect(() => setDraft(yearBudget), [yearBudget]);
 
@@ -992,10 +1022,18 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
     const id = uid();
     setDraft((d) => ({ ...d, categories: { ...d.categories, [id]: { name: "Neue Kategorie", positions: [] } } }));
   }
-  function removeCategory(catId) {
-    const name = draft.categories[catId]?.name || catId;
-    if (typeof window !== "undefined" && window.confirm && !window.confirm(`Kategorie „${name}" wirklich löschen? Alle Positionen gehen verloren.`)) return;
-    setDraft((d) => { const c = { ...d.categories }; delete c[catId]; return { ...d, categories: c }; });
+  async function performDeleteCategory(catId, targetCatId) {
+    if (targetCatId) {
+      const ok = await reassignExpenses(catId, targetCatId);
+      if (!ok) return false;
+    }
+    const updatedCategories = { ...draft.categories };
+    delete updatedCategories[catId];
+    const updatedBudget = { ...draft, categories: updatedCategories };
+    setDraft(updatedBudget);
+    persistYearBudget(updatedBudget);
+    setDeleteCatModal(null);
+    return true;
   }
   function updatePosition(catId, posId, field, value) {
     setDraft((d) => ({
@@ -1185,7 +1223,7 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
               <input className="fb-cat-name-input" value={cat.name} onChange={(e) => updateCategoryName(catId, e.target.value)} />
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span className="fb-mono" style={{ fontSize: 13.5, color: "var(--muted)" }}>Total: {formatCHF(variableSum + fixedSum)}</span>
-                <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => removeCategory(catId)}><Trash2 size={15} /></button>
+                <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => setDeleteCatModal(catId)}><Trash2 size={15} /></button>
               </div>
             </div>
 
@@ -1216,13 +1254,13 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
       </button>
 
       <div className="fb-card">
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, flexWrap: "wrap", gap: 8 }}>
           <span>Variable Positionen (alle Kategorien)</span><span className="fb-mono">{formatCHF(totalVar)}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, marginTop: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13.5, marginTop: 4, flexWrap: "wrap", gap: 8 }}>
           <span>Fixkosten (alle Kategorien)</span><span className="fb-mono">{formatCHF(totalFixed)}</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14.5, marginTop: 8, fontWeight: 600, borderTop: "1px solid var(--border)", paddingTop: 8 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14.5, marginTop: 8, fontWeight: 600, borderTop: "1px solid var(--border)", paddingTop: 8, flexWrap: "wrap", gap: 8 }}>
           <span>Total Ausgaben (Plan)</span><span className="fb-mono">{formatCHF(totalVar + totalFixed)}</span>
         </div>
       </div>
@@ -1235,6 +1273,93 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
           onCreate={(y, base) => { addYear(y, base); setNewYearOpen(false); }}
         />
       )}
+
+      {deleteCatModal && (
+        <DeleteCategoryModal
+          categoryName={draft.categories[deleteCatModal]?.name || deleteCatModal}
+          affectedCount={expenses.filter((e) => e.categoryId === deleteCatModal).length}
+          otherCategories={Object.entries(draft.categories)
+            .filter(([id]) => id !== deleteCatModal)
+            .map(([id, c]) => ({ id, name: c.name }))}
+          onClose={() => setDeleteCatModal(null)}
+          onConfirm={(targetCatId) => performDeleteCategory(deleteCatModal, targetCatId)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeleteCategoryModal({ categoryName, affectedCount, otherCategories, onClose, onConfirm }) {
+  const [mode, setMode] = useState(affectedCount > 0 ? "reassign" : "delete");
+  const [targetCatId, setTargetCatId] = useState(otherCategories[0]?.id || "");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleConfirm() {
+    setLoading(true);
+    setError("");
+    const ok = await onConfirm(mode === "reassign" ? targetCatId : null);
+    if (!ok) {
+      setError("Verschieben fehlgeschlagen — Kategorie wurde nicht gelöscht. Bitte nochmal versuchen.");
+      setLoading(false);
+    }
+    // Bei Erfolg schliesst der Aufrufer das Modal selbst.
+  }
+
+  return (
+    <div className="fb-modal-backdrop" onClick={onClose}>
+      <div className="fb-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="fb-modal-head">
+          <h3>Kategorie löschen</h3>
+          <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div className="fb-stat-sub" style={{ marginBottom: 14 }}>
+          Kategorie „{categoryName}" wirklich löschen? Alle Positionen darin gehen verloren.
+        </div>
+
+        {affectedCount > 0 ? (
+          <>
+            <div style={{ fontSize: 13.5, marginBottom: 12 }}>
+              Dieser Kategorie sind noch <strong>{affectedCount} erfasste Ausgabe{affectedCount === 1 ? "" : "n"}</strong> zugeordnet. Was soll damit passieren?
+            </div>
+            <div className="fb-field">
+              <div className="fb-checkrow" style={{ marginBottom: 10 }}>
+                <div className={`fb-check-pill ${mode === "reassign" ? "active" : ""}`} onClick={() => setMode("reassign")}>Verschieben</div>
+                <div className={`fb-check-pill ${mode === "delete" ? "active" : ""}`} onClick={() => setMode("delete")}>Nicht verschieben</div>
+              </div>
+              {mode === "reassign" ? (
+                otherCategories.length > 0 ? (
+                  <select className="fb-select" value={targetCatId} onChange={(e) => setTargetCatId(e.target.value)}>
+                    {otherCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (
+                  <div style={{ color: "var(--negative)", fontSize: 13 }}>Keine andere Kategorie vorhanden, in die verschoben werden könnte.</div>
+                )
+              ) : (
+                <div className="fb-stat-sub">
+                  Die Ausgaben bleiben in der Datenbank gespeichert, tauchen danach aber nirgends mehr im Budget auf — nur noch über den CSV-Export im Tab „Profil" einsehbar.
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="fb-stat-sub" style={{ marginBottom: 10 }}>Keine Ausgaben sind aktuell dieser Kategorie zugeordnet.</div>
+        )}
+
+        {error && <div style={{ color: "var(--negative)", fontSize: 12.5, marginBottom: 10 }}>{error}</div>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+          <button className="fb-btn fb-btn-ghost" onClick={onClose} disabled={loading}>Abbrechen</button>
+          <button
+            className="fb-btn fb-btn-danger"
+            onClick={handleConfirm}
+            disabled={loading || (mode === "reassign" && affectedCount > 0 && otherCategories.length === 0)}
+          >
+            {loading ? "Wird gelöscht…" : "Kategorie löschen"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1374,7 +1499,7 @@ function RemindersPage({ reminders, persistReminders }) {
           return (
             <div className="fb-sub-row" key={r.id}>
               <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, gap: 8, flexWrap: "wrap" }}>
                   <strong style={{ fontSize: 14 }}>{r.title}</strong>
                   <span className={`fb-badge ${status.tone}`}>{status.label}</span>
                 </div>
@@ -1429,12 +1554,18 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
   const [deleteStep, setDeleteStep] = useState(0);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [myName, setMyName] = useState(getMyPersonName());
 
   useEffect(() => setNameDraft(householdName || ""), [householdName]);
   useEffect(() => setPersonsDraft(persons), [persons]);
   useEffect(() => {
     listMembers().then(setMembers).catch(() => setMembers([]));
   }, [inviteCode]);
+
+  function handleMyNameChange(value) {
+    setMyName(value);
+    setMyPersonName(value);
+  }
 
   function updatePersonName(idx, value) {
     setPersonsDraft((list) => list.map((p, i) => (i === idx ? value : p)));
@@ -1554,9 +1685,20 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
             <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => removePerson(idx)}><Trash2 size={14} /></button>
           </div>
         ))}
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="fb-btn fb-btn-secondary" onClick={addPerson}><Plus size={13} /> Person hinzufügen</button>
           <button className="fb-btn" onClick={() => persistPersons(personsDraft)}>Speichern</button>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px dashed var(--border)" }}>
+          <label className="fb-label">Das bin ich (auf diesem Gerät)</label>
+          <select className="fb-select" value={myName} onChange={(e) => handleMyNameChange(e.target.value)}>
+            <option value="">— nicht ausgewählt —</option>
+            {persons.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+          <div className="fb-stat-sub" style={{ marginTop: 6 }}>
+            Wird beim Erfassen neuer Ausgaben automatisch als "Einkäufer" vorausgewählt — gilt nur für dieses Gerät.
+          </div>
         </div>
       </div>
 
@@ -1582,16 +1724,18 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
         ) : members.length === 0 ? (
           <div className="fb-stat-sub">Keine Mitglieder gefunden.</div>
         ) : (
+          <div style={{ overflowX: "auto" }}>
           <table className="fb-table">
             <tbody>
               {members.map((m, i) => (
                 <tr key={i}>
-                  <td>{m.email}</td>
-                  <td style={{ textAlign: "right", color: "var(--muted)" }}>{new Date(m.joined_at).toLocaleDateString("de-CH")}</td>
+                  <td style={{ wordBreak: "break-all" }}>{m.email}</td>
+                  <td style={{ textAlign: "right", color: "var(--muted)", whiteSpace: "nowrap" }}>{new Date(m.joined_at).toLocaleDateString("de-CH")}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 
@@ -1638,7 +1782,7 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
             <div style={{ fontSize: 13, marginBottom: 10 }}>
               Bist du sicher? Diese Aktion kann nicht rückgängig gemacht werden.
             </div>
-            <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="fb-btn fb-btn-ghost" onClick={() => { setDeleteStep(0); setDeleteError(""); }} disabled={deleteLoading}>
                 Abbrechen
               </button>
@@ -1843,6 +1987,36 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
     } catch { showToast("Speichern fehlgeschlagen"); }
   }
 
+  async function updateExpense(id, exp) {
+    try {
+      const updated = await updateExpenseRow(id, exp);
+      setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
+      showToast("Ausgabe aktualisiert");
+    } catch { showToast("Aktualisieren fehlgeschlagen"); }
+  }
+
+  async function reassignExpenses(oldCatId, newCatId) {
+    const affected = expenses.filter((e) => e.categoryId === oldCatId);
+    if (!affected.length) return true;
+    const results = await Promise.allSettled(
+      affected.map((e) =>
+        updateExpenseRow(e.id, { categoryId: newCatId, date: e.date, position: e.position, ort: e.ort, einkaeufer: e.einkaeufer, betrag: e.betrag })
+      )
+    );
+    const succeeded = [];
+    let failCount = 0;
+    results.forEach((r) => { if (r.status === "fulfilled") succeeded.push(r.value); else failCount += 1; });
+    if (succeeded.length) {
+      setExpenses((prev) => prev.map((e) => succeeded.find((u) => u.id === e.id) || e));
+    }
+    if (failCount > 0) {
+      showToast(`${failCount} Ausgabe${failCount === 1 ? "" : "n"} konnte(n) nicht verschoben werden`);
+      return false;
+    }
+    showToast(`${succeeded.length} Ausgabe${succeeded.length === 1 ? "" : "n"} verschoben`);
+    return true;
+  }
+
   async function deleteExpense(id) {
     const prevExpenses = expenses;
     setExpenses((cur) => cur.filter((e) => e.id !== id));
@@ -1860,6 +2034,7 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
       position: cfg.position,
       lockCategory: !!cfg.lockCategory,
       lockPosition: !!cfg.lockPosition,
+      editing: cfg.editing || null,
     });
   }
 
@@ -1927,7 +2102,7 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         )}
         {view.name === "yearBudget" && (
           <YearBudgetPage yearBudget={yearBudget} prevYearBudget={prevYearBudget} years={years} year={year} setYear={setYear}
-            persistYearBudget={persistYearBudget} addYear={addYear} persons={persons} />
+            persistYearBudget={persistYearBudget} addYear={addYear} persons={persons} expenses={expenses} reassignExpenses={reassignExpenses} />
         )}
         {view.name === "reminders" && (
           <RemindersPage reminders={reminders} persistReminders={persistReminders} />
@@ -1951,12 +2126,17 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         <ExpenseModal
           yearBudget={yearBudget}
           persons={persons}
-          defaultCategoryId={expenseModalConfig.catId}
-          defaultPosition={expenseModalConfig.position}
+          defaultCategoryId={expenseModalConfig.editing ? expenseModalConfig.editing.categoryId : expenseModalConfig.catId}
+          defaultPosition={expenseModalConfig.editing ? expenseModalConfig.editing.position : expenseModalConfig.position}
           lockCategory={expenseModalConfig.lockCategory}
           lockPosition={expenseModalConfig.lockPosition}
+          initial={expenseModalConfig.editing}
           onClose={() => setExpenseModalConfig(null)}
-          onSave={(exp) => { addExpense(exp); setExpenseModalConfig(null); }}
+          onSave={(exp) => {
+            if (expenseModalConfig.editing) updateExpense(expenseModalConfig.editing.id, exp);
+            else addExpense(exp);
+            setExpenseModalConfig(null);
+          }}
         />
       )}
 
