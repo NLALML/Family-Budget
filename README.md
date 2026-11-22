@@ -54,6 +54,42 @@ Dashboard, Jahresbudget/Fixkosten und Beleg-Erfassung per Foto.
 
    alter publication supabase_realtime add table households;
    ```
+
+   **Zusätzlicher Nachtrag für die Monats-PDF-Berichte** (neu hinzugekommen):
+
+   ```sql
+   create table if not exists monthly_reports (
+     id uuid primary key default gen_random_uuid(),
+     household_id uuid not null references households(id) on delete cascade,
+     year integer not null,
+     month integer not null,
+     summary_path text not null,
+     detail_path text not null,
+     is_read boolean not null default false,
+     created_at timestamptz not null default now(),
+     unique (household_id, year, month)
+   );
+
+   alter table monthly_reports enable row level security;
+
+   create policy "select own monthly_reports" on monthly_reports
+     for select using (is_household_member(household_id));
+   create policy "update own monthly_reports" on monthly_reports
+     for update using (is_household_member(household_id));
+
+   insert into storage.buckets (id, name, public)
+   values ('monthly-reports', 'monthly-reports', false)
+   on conflict (id) do nothing;
+
+   create policy "select own household report files"
+   on storage.objects for select
+   using (
+     bucket_id = 'monthly-reports'
+     and is_household_member((storage.foldername(name))[1]::uuid)
+   );
+
+   alter publication supabase_realtime add table monthly_reports;
+   ```
 3. Unter **Authentication → Providers** ist E-Mail/Passwort standardmässig
    aktiv. Für den Start empfiehlt es sich, unter **Authentication → Settings**
    die E-Mail-Bestätigung testweise zu deaktivieren (sonst muss jede Person
@@ -135,3 +171,50 @@ Browser.
 `netlify/functions/scan-receipt.js` ruft serverseitig die Anthropic API auf.
 Das verwendete Modell ist dort als `model: "claude-sonnet-5"` hinterlegt —
 bei Bedarf anpassen.
+
+## Monats-PDF-Berichte
+
+`netlify/functions/generate-monthly-reports.js` läuft automatisch am 1. jedes
+Monats um 03:00 UTC (Cron-Zeitplan in `netlify.toml`) für **alle** Haushalte
+und erzeugt zwei PDFs zum gerade abgelaufenen Monat:
+
+- **Kurzversion**: Plan vs. Ist pro Kategorie
+- **Detailversion**: alle einzelnen erfassten Ausgaben, nach Kategorie
+  gruppiert
+
+Beide werden in den privaten Supabase-Storage-Bucket `monthly-reports`
+hochgeladen; eine Zeile in `monthly_reports` löst im Tab "Profil" eine
+Benachrichtigung (roter Punkt) mit Download-Links aus. Läuft mit dem bereits
+vorhandenen `SUPABASE_SERVICE_ROLE_KEY` — keine zusätzliche Umgebungsvariable
+nötig.
+
+**Manuell testen, ohne bis zum 1. des Monats zu warten:**
+
+```bash
+netlify functions:invoke generate-monthly-reports
+```
+
+oder die deployte Function-URL direkt aufrufen:
+`https://DEINE-SITE.netlify.app/.netlify/functions/generate-monthly-reports`
+
+Das erzeugt sofort Berichte für den **zuletzt abgeschlossenen Monat** — sind
+noch keine Ausgaben für einen vollständigen Vormonat vorhanden, entsteht ein
+Bericht mit leeren/null Werten, das ist beim Testen normal.
+
+## Jahresübersicht als PDF
+
+Im Tab **Jahresbudget** erzeugt der Button **"Jahresübersicht als PDF"**
+direkt im Browser (kein Server-Aufruf nötig) ein PDF für das gerade
+ausgewählte Jahr — pro Kategorie eine 12-Monats-Tabelle (Plan/Ist/Differenz)
+sowie einen **Durchschnittswert pro Monat** (nur über tatsächlich erfasste
+Monate ab dem eingestellten Startmonat gerechnet, nicht über nicht genutzte
+Monate hinweg verfälscht) und zusätzlich pro Kategorie eine Liste aller
+Positionen mit deren durchschnittlichem Ist/Monat im Vergleich zum aktuell
+eingestellten Plan — als direkte Grundlage für die Budgetierung des
+nächsten Jahres. Enthält bewusst **keine** Einzelabrechnungen/Transaktionen
+(dafür gibt es die "Abrechnung"-Ansichten pro Kategorie/Position).
+
+
+## Update: Belege speichern, Duplikat-Warnung, Mediathek-Upload
+
+Führe einmalig im Supabase **SQL Editor** den Inhalt von `supabase/receipts-update.sql` aus (neue Spalten, Bucket `receipts`, Policies, UPDATE-Policy für Ausgaben). Danach das Projekt wie gewohnt auf GitHub hochladen.

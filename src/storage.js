@@ -39,6 +39,11 @@ export function subscribeRemoteChanges(callback) {
       { event: "*", schema: "public", table: "households", filter: `id=eq.${householdId}` },
       () => callback && callback()
     )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "monthly_reports", filter: `household_id=eq.${householdId}` },
+      () => callback && callback()
+    )
     .subscribe();
   return () => {
     supabase.removeChannel(channel);

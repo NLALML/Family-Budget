@@ -161,9 +161,77 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
+-- Monats-PDF-Berichte (Rückblick per 1. des Folgemonats)
+-- ---------------------------------------------------------------------------
+
+create table if not exists monthly_reports (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references households(id) on delete cascade,
+  year integer not null,
+  month integer not null,
+  summary_path text not null,
+  detail_path text not null,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (household_id, year, month)
+);
+
+alter table monthly_reports enable row level security;
+
+create policy "select own monthly_reports" on monthly_reports
+  for select using (is_household_member(household_id));
+-- Kein insert-Policy für normale Nutzer: nur die Netlify Scheduled Function
+-- (mit dem service_role Key, der RLS umgeht) legt Berichte an.
+create policy "update own monthly_reports" on monthly_reports
+  for update using (is_household_member(household_id));
+
+-- Storage-Bucket für die erzeugten PDFs (privat — Zugriff nur über die
+-- untenstehenden Policies, die den Haushalt des Nutzers prüfen).
+insert into storage.buckets (id, name, public)
+values ('monthly-reports', 'monthly-reports', false)
+on conflict (id) do nothing;
+
+create policy "select own household report files"
+on storage.objects for select
+using (
+  bucket_id = 'monthly-reports'
+  and is_household_member((storage.foldername(name))[1]::uuid)
+);
+
+-- ---------------------------------------------------------------------------
+-- Belege (Fotos/PDFs) pro Ausgabe + Duplikat-Erkennung
+-- ---------------------------------------------------------------------------
+
+alter table expenses add column if not exists receipt_path text;
+alter table expenses add column if not exists receipt_hash text;
+create index if not exists expenses_receipt_hash_idx on expenses (household_id, receipt_hash);
+
+-- Ausgaben nachträglich bearbeiten (UPDATE-Policy)
+drop policy if exists "update expenses" on expenses;
+create policy "update expenses" on expenses
+  for update using (is_household_member(household_id));
+
+insert into storage.buckets (id, name, public)
+values ('receipts', 'receipts', false)
+on conflict (id) do nothing;
+
+drop policy if exists "select own household receipts" on storage.objects;
+create policy "select own household receipts" on storage.objects for select
+using (bucket_id = 'receipts' and is_household_member((storage.foldername(name))[1]::uuid));
+
+drop policy if exists "insert own household receipts" on storage.objects;
+create policy "insert own household receipts" on storage.objects for insert
+with check (bucket_id = 'receipts' and is_household_member((storage.foldername(name))[1]::uuid));
+
+drop policy if exists "delete own household receipts" on storage.objects;
+create policy "delete own household receipts" on storage.objects for delete
+using (bucket_id = 'receipts' and is_household_member((storage.foldername(name))[1]::uuid));
+
+-- ---------------------------------------------------------------------------
 -- Realtime aktivieren, damit alle Haushaltsmitglieder Live-Updates bekommen
 -- ---------------------------------------------------------------------------
 
 alter publication supabase_realtime add table app_data;
 alter publication supabase_realtime add table expenses;
 alter publication supabase_realtime add table households;
+alter publication supabase_realtime add table monthly_reports;

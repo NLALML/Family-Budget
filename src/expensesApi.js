@@ -15,6 +15,8 @@ function rowToExpense(row) {
     ort: row.ort,
     einkaeufer: row.einkaeufer,
     betrag: Number(row.betrag) || 0,
+    receiptPath: row.receipt_path || null,
+    receiptHash: row.receipt_hash || null,
   };
 }
 
@@ -44,6 +46,8 @@ export async function insertExpense(exp) {
       ort: exp.ort,
       einkaeufer: exp.einkaeufer,
       betrag: exp.betrag,
+      receipt_path: exp.receiptPath || null,
+      receipt_hash: exp.receiptHash || null,
     })
     .select()
     .single();
@@ -63,6 +67,8 @@ export async function updateExpenseRow(id, exp) {
       ort: exp.ort,
       einkaeufer: exp.einkaeufer,
       betrag: exp.betrag,
+      // Beleg-Felder nur ändern, wenn sie explizit mitgegeben werden
+      ...(exp.receiptPath !== undefined ? { receipt_path: exp.receiptPath, receipt_hash: exp.receiptHash ?? null } : {}),
     })
     .eq("id", id)
     .eq("household_id", householdId)

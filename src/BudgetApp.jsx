@@ -4,13 +4,16 @@ import {
   Home, LayoutGrid, CalendarDays, Camera, Plus, ArrowLeft,
   Trash2, X, ChevronRight, Check, Loader2, Receipt,
   Settings as SettingsIcon, Copy, RefreshCw, Download, LogOut, Users,
-  Bell, Pencil, RotateCcw,
+  Bell, Pencil, RotateCcw, Image as ImageIcon, Paperclip, AlertTriangle,
 } from "lucide-react";
 import { storage } from "./storage.js";
+import { hashFile, compressImage, uploadReceipt, removeReceiptFile, getReceiptUrls } from "./receiptsApi.js";
 import { listExpenses, insertExpense, removeExpense, updateExpenseRow } from "./expensesApi.js";
 import { updateHouseholdName, regenerateInviteCode, listMembers } from "./householdApi.js";
 import { deleteOwnAccount } from "./accountApi.js";
 import { getMyPersonName, setMyPersonName } from "./myIdentity.js";
+import { listReports, markReportRead, getReportDownloadUrl } from "./reportsApi.js";
+import { generateYearReviewPdf } from "./yearReportPdf.js";
 import { supabase } from "./supabaseClient.js";
 
 /* ============================== KONSTANTEN ============================== */
@@ -168,7 +171,7 @@ function normalizePosition(p) {
     name: p.name || "",
     amount: Number(p.amount) || 0,
     isFixed: !!p.isFixed,
-    type: p.type === "yearly" ? "yearly" : "monthly",
+    type: ["yearly", "quarterly"].includes(p.type) ? p.type : "monthly",
     months: Array.isArray(p.months) && p.months.length ? p.months : [...ALL_MONTHS],
     yearlyMonth: p.yearlyMonth || 1,
     split: Array.isArray(p.split) ? p.split.map((s) => ({ person: s.person, amount: Number(s.amount) || 0 })) : [],
@@ -222,8 +225,16 @@ function cloneYearBudget(source, newYear) {
   return { year: newYear, startMonth: 1, income: { ...source.income }, categories };
 }
 
+// Für "quartalsweise" Fixkosten: ausgehend vom ersten Fälligkeitsmonat sind
+// automatisch die 3 Monate danach jeweils ebenfalls fällig (alle 3 Monate).
+function quarterlyDueMonths(startMonth) {
+  const start = startMonth || 1;
+  return [0, 1, 2, 3].map((k) => ((start - 1 + k * 3) % 12) + 1);
+}
+
 function fixedActiveInMonth(item, month) {
   if (item.type === "yearly") return item.yearlyMonth === month;
+  if (item.type === "quarterly") return quarterlyDueMonths(item.yearlyMonth).includes(month);
   return (item.months || []).includes(month);
 }
 
@@ -370,14 +381,15 @@ const CSS = `
 .fb-display{ font-family:'Fraunces',Georgia,serif; }
 .fb-mono{ font-family:'IBM Plex Mono',monospace; font-variant-numeric:tabular-nums; }
 
-.fb-sidebar{ width:220px; flex-shrink:0; background:var(--ink); color:#fff; padding:24px 14px; display:flex; flex-direction:column; gap:4px; position:sticky; top:0; height:100vh; }
+.fb-sidebar{ width:220px; flex-shrink:0; background:var(--ink); color:#fff; padding:calc(24px + env(safe-area-inset-top, 0px)) 14px 24px; display:flex; flex-direction:column; gap:4px; position:sticky; top:0; height:100vh; }
 .fb-sidebar-brand{ font-family:'Fraunces',serif; font-size:19px; margin:4px 8px 22px; display:flex; align-items:center; gap:8px; }
 .fb-sidebar-brand .dot{ width:8px; height:8px; border-radius:50%; background:var(--accent); display:inline-block; }
 .fb-nav-item{ display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:9px; cursor:pointer; color:rgba(255,255,255,.72); font-size:14px; }
 .fb-nav-item:hover{ background:rgba(255,255,255,.08); color:#fff; }
 .fb-nav-item.active{ background:var(--accent); color:#fff; }
+.fb-notify-dot{ position:absolute; top:9px; left:22px; width:8px; height:8px; border-radius:50%; background:var(--negative); border:2px solid var(--ink); }
 
-.fb-main{ flex:1; min-width:0; padding:26px 30px 100px; }
+.fb-main{ flex:1; min-width:0; padding:calc(26px + env(safe-area-inset-top, 0px)) 30px 100px; }
 .fb-topbar{ display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; flex-wrap:wrap; gap:12px; }
 .fb-title{ font-family:'Fraunces',serif; font-size:26px; margin:0; }
 .fb-subtitle{ color:var(--muted); font-size:13px; margin-top:2px; }
@@ -421,7 +433,7 @@ const CSS = `
 
 @media(max-width:840px){
   .fb-sidebar{ display:none; }
-  .fb-main{ padding:16px 14px calc(88px + env(safe-area-inset-bottom, 0px)); width:100%; }
+  .fb-main{ padding:calc(16px + env(safe-area-inset-top, 0px)) 14px calc(88px + env(safe-area-inset-bottom, 0px)); width:100%; }
   .fb-mobile-nav{ display:flex; position:fixed; bottom:0; left:0; right:0; background:var(--ink); padding:6px 12px calc(6px + env(safe-area-inset-bottom, 0px)); justify-content:space-around; z-index:50; }
   .fb-mobile-nav-item{ display:flex; flex-direction:column; align-items:center; gap:2px; color:rgba(255,255,255,.6); font-size:10px; cursor:pointer; flex:1; padding:6px 2px; min-width:0; text-align:center; line-height:1.15; }
   .fb-mobile-nav-item.active{ color:#fff; }
@@ -736,13 +748,57 @@ function CategorySubthemes({ catId, yearBudget, expenses, year, month, openBilli
 
 /* ============================== ABRECHNUNG (LEVEL 3) ============================== */
 
-function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExpenseModal, goBack }) {
+function ReceiptViewer({ url, onClose }) {
+  const isPdf = /\.pdf(\?|$)/i.test(url);
+  return (
+    <div className="fb-modal-backdrop" onClick={onClose}>
+      <div className="fb-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="fb-modal-head">
+          <h3>Beleg</h3>
+          <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={onClose}><X size={16} /></button>
+        </div>
+        {isPdf ? (
+          <a className="fb-btn" href={url} target="_blank" rel="noreferrer">PDF öffnen</a>
+        ) : (
+          <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="Beleg" style={{ width: "100%", borderRadius: 10 }} /></a>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExpenseModal, goBack, year, month }) {
+  const [receiptUrls, setReceiptUrls] = useState({});
+  const [viewerUrl, setViewerUrl] = useState(null);
+  const [loadingReceipt, setLoadingReceipt] = useState(null);
   const rows = expenses
     .filter((e) => e.categoryId === catId && (!position || e.position === position))
     .sort((a, b) => (a.date < b.date ? 1 : -1));
 
+  // Belege des aktiven Monats im Hintergrund vorladen (signierte URLs)
+  const monthPrefix = `${year}-${String(month).padStart(2, "0")}`;
+  const monthPathsKey = rows.filter((r) => r.receiptPath && r.date.startsWith(monthPrefix)).map((r) => r.receiptPath).join("|");
+  useEffect(() => {
+    const paths = monthPathsKey ? monthPathsKey.split("|") : [];
+    if (!paths.length) return;
+    let cancelled = false;
+    getReceiptUrls(paths).then((urls) => { if (!cancelled) setReceiptUrls((prev) => ({ ...prev, ...urls })); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [monthPathsKey]);
+
+  async function openReceipt(path) {
+    if (receiptUrls[path]) { setViewerUrl(receiptUrls[path]); return; }
+    setLoadingReceipt(path);
+    try {
+      const urls = await getReceiptUrls([path]);
+      setReceiptUrls((prev) => ({ ...prev, ...urls }));
+      if (urls[path]) setViewerUrl(urls[path]);
+    } catch {} finally { setLoadingReceipt(null); }
+  }
+
   return (
     <div>
+      {viewerUrl && <ReceiptViewer url={viewerUrl} onClose={() => setViewerUrl(null)} />}
       <button className="fb-btn fb-btn-ghost fb-back-btn" onClick={goBack} type="button">
         <ArrowLeft size={16} /> Zurück
       </button>
@@ -774,6 +830,11 @@ function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExp
                   <td className="fb-mono" style={{ textAlign: "right" }}>{formatCHF(r.betrag)}</td>
                   <td>
                     <div style={{ display: "flex", gap: 4 }}>
+                      {r.receiptPath && (
+                        <button className="fb-btn fb-btn-ghost fb-btn-icon" title="Beleg ansehen" onClick={() => openReceipt(r.receiptPath)}>
+                          {loadingReceipt === r.receiptPath ? <Loader2 size={14} className="fb-spin" /> : <Receipt size={14} />}
+                        </button>
+                      )}
                       <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => openExpenseModal({ editing: r })}>
                         <Pencil size={14} />
                       </button>
@@ -794,7 +855,7 @@ function Billing({ catId, position, yearBudget, expenses, deleteExpense, openExp
 
 /* ============================== AUSGABE ERFASSEN (MODAL) ============================== */
 
-function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition, lockCategory, lockPosition, initial, onClose, onSave }) {
+function ExpenseModal({ expenses, yearBudget, persons, defaultCategoryId, defaultPosition, lockCategory, lockPosition, initial, onClose, onSave }) {
   const categoryIds = Object.keys(yearBudget?.categories || {});
   const [tab, setTab] = useState("manual");
   const [categoryId, setCategoryId] = useState(defaultCategoryId || categoryIds[0]);
@@ -811,6 +872,19 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
   const [scanError, setScanError] = useState("");
   const [scanned, setScanned] = useState(false);
   const fileInputRef = useRef(null);
+  const galleryInputRef = useRef(null);
+  const [receiptFile, setReceiptFile] = useState(null);
+  const [receiptHash, setReceiptHash] = useState(null);
+  const [duplicateWarning, setDuplicateWarning] = useState("");
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+
+  function findDuplicate(hash, d, o, b) {
+    const others = (expenses || []).filter((e) => !initial || e.id !== initial.id);
+    if (hash && others.some((e) => e.receiptHash && e.receiptHash === hash)) return true;
+    const amount = Number(b);
+    return !!(d && o && amount && others.some((e) =>
+      e.date === d && Number(e.betrag) === amount && String(e.ort || "").trim().toLowerCase() === String(o).trim().toLowerCase()));
+  }
 
   function handleCategoryChange(cid) {
     setCategoryId(cid);
@@ -823,16 +897,26 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
   async function handleFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
     setScanning(true);
     setScanError("");
+    setDuplicateWarning("");
+    setConfirmDuplicate(false);
     try {
-      const base64 = await fileToBase64(file);
+      const hash = await hashFile(file);
+      setReceiptHash(hash);
+      if (findDuplicate(hash, null, null, null)) {
+        setDuplicateWarning("Ausgabe bereits erfasst — dieser Beleg wurde schon einmal hochgeladen.");
+      }
+      const toStore = await compressImage(file);
+      setReceiptFile(toStore);
+      const base64 = await fileToBase64(toStore);
       const categoryOptions = categoryIds.map((cid) => ({
         id: cid,
         name: yearBudget.categories[cid].name,
         positions: (yearBudget.categories[cid].positions || []).filter((p) => !p.isFixed).map((p) => p.name),
       }));
-      const result = await scanReceipt(base64, file.type || "image/jpeg", categoryOptions);
+      const result = await scanReceipt(base64, toStore.type || "image/jpeg", categoryOptions);
       if (result.datum) setDate(result.datum);
       if (result.ort) setOrt(result.ort);
       if (result.betrag != null) setBetrag(String(result.betrag));
@@ -848,6 +932,9 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
         if (match) setPosition(match.name);
       }
       setScanned(true);
+      if (findDuplicate(hash, result.datum, result.ort, result.betrag)) {
+        setDuplicateWarning("Ausgabe bereits erfasst — eine Ausgabe mit gleichem Datum, Ort und Betrag existiert schon.");
+      }
     } catch (err) {
       setScanError("Beleg konnte nicht automatisch gelesen werden. Bitte manuell ergänzen.");
     } finally {
@@ -857,7 +944,12 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
 
   function submit() {
     if (!betrag || !ort || !einkaeufer) return;
-    onSave({ categoryId, date, position, ort, einkaeufer, betrag: Number(betrag) });
+    if (!confirmDuplicate && findDuplicate(receiptHash, date, ort, betrag)) {
+      setDuplicateWarning("Ausgabe bereits erfasst — eine gleiche Ausgabe (Beleg oder Datum/Ort/Betrag) existiert schon. Trotzdem speichern?");
+      setConfirmDuplicate(true);
+      return;
+    }
+    onSave({ categoryId, date, position, ort, einkaeufer, betrag: Number(betrag), receiptFile, receiptHash });
   }
 
   return (
@@ -876,11 +968,25 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
         {tab === "photo" && (
           <div style={{ marginBottom: 14 }}>
             <input ref={fileInputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handleFile} />
-            <button className="fb-btn fb-btn-secondary" style={{ width: "100%", justifyContent: "center" }} onClick={() => fileInputRef.current?.click()} disabled={scanning}>
-              {scanning ? <><Loader2 size={15} className="fb-spin" /> Beleg wird gelesen…</> : <><Camera size={15} /> Beleg fotografieren / hochladen</>}
-            </button>
+            <input ref={galleryInputRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={handleFile} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="fb-btn fb-btn-secondary" style={{ flex: 1, justifyContent: "center" }} onClick={() => fileInputRef.current?.click()} disabled={scanning} type="button">
+                <Camera size={15} /> Foto aufnehmen
+              </button>
+              <button className="fb-btn fb-btn-secondary" style={{ flex: 1, justifyContent: "center" }} onClick={() => galleryInputRef.current?.click()} disabled={scanning} type="button">
+                <ImageIcon size={15} /> Mediathek / Dateien
+              </button>
+            </div>
+            {scanning && <div style={{ fontSize: 12.5, marginTop: 8, color: "var(--muted)" }}><Loader2 size={13} className="fb-spin" style={{ verticalAlign: "-2px" }} /> Beleg wird gelesen…</div>}
+            {receiptFile && !scanning && <div style={{ fontSize: 12.5, marginTop: 8, color: "var(--muted)" }}><Paperclip size={13} style={{ verticalAlign: "-2px" }} /> Beleg wird beim Speichern abgelegt.</div>}
             {scanError && <div style={{ color: "var(--negative)", fontSize: 12.5, marginTop: 8 }}>{scanError}</div>}
             {scanned && !scanError && <div style={{ color: "var(--positive)", fontSize: 12.5, marginTop: 8 }}><Check size={13} style={{ verticalAlign: "-2px" }} /> Daten inkl. Kategorie-Vorschlag übernommen — bitte prüfen.</div>}
+          </div>
+        )}
+
+        {duplicateWarning && (
+          <div style={{ background: "var(--warning-soft)", color: "var(--warning)", border: "1px solid var(--warning)", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 14, display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} /> <span>{duplicateWarning}</span>
           </div>
         )}
 
@@ -922,11 +1028,11 @@ function ExpenseModal({ yearBudget, persons, defaultCategoryId, defaultPosition,
         </div>
         <div className="fb-field">
           <label className="fb-label">Wert (CHF)</label>
-          <input className="fb-input" type="number" step="0.05" value={betrag} onChange={(e) => setBetrag(e.target.value)} placeholder="0.00" />
+          <input className="fb-input" type="number" onFocus={(e) => e.target.select()} step="0.05" value={betrag} onChange={(e) => setBetrag(e.target.value)} placeholder="0.00" />
         </div>
 
         <button className="fb-btn" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} onClick={submit} disabled={!betrag || !ort}>
-          {initial ? "Aktualisieren" : "Speichern"}
+          {confirmDuplicate ? "Trotzdem speichern" : initial ? "Aktualisieren" : "Speichern"}
         </button>
       </div>
     </div>
@@ -943,7 +1049,7 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
           <input className="fb-input" value={p.name} onChange={(e) => onUpdate("name", e.target.value)} />
           {prevAmt != null && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>Vorjahr: {formatCHF(prevAmt)}</div>}
         </div>
-        <input className="fb-input fb-amount" type="number" value={p.amount} onChange={(e) => onUpdate("amount", e.target.value)} />
+        <input className="fb-input fb-amount" type="number" onFocus={(e) => e.target.select()} value={p.amount} onChange={(e) => onUpdate("amount", e.target.value)} />
         <div className={`fb-check-pill ${p.isFixed ? "active" : ""}`} onClick={onToggleFixed} style={{ marginTop: 2 }}>Fixkosten</div>
         <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={onRemove}><Trash2 size={14} /></button>
       </div>
@@ -954,6 +1060,7 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
             <label className="fb-label">Häufigkeit</label>
             <div className="fb-checkrow">
               <div className={`fb-check-pill ${p.type === "monthly" ? "active" : ""}`} onClick={() => onUpdate("type", "monthly")}>Monatlich</div>
+              <div className={`fb-check-pill ${p.type === "quarterly" ? "active" : ""}`} onClick={() => onUpdate("type", "quarterly")}>Quartalsweise</div>
               <div className={`fb-check-pill ${p.type === "yearly" ? "active" : ""}`} onClick={() => onUpdate("type", "yearly")}>Jährlich</div>
             </div>
           </div>
@@ -965,6 +1072,16 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
                 {MONTHS_SHORT.map((m, i) => (
                   <div key={m} className={`fb-check-pill ${p.months.includes(i + 1) ? "active" : ""}`} onClick={() => onToggleMonth(i + 1)}>{m}</div>
                 ))}
+              </div>
+            </div>
+          ) : p.type === "quarterly" ? (
+            <div className="fb-field" style={{ maxWidth: 260, marginBottom: 10 }}>
+              <label className="fb-label">Erste Fälligkeit (danach alle 3 Monate)</label>
+              <select className="fb-select" value={p.yearlyMonth} onChange={(e) => onUpdate("yearlyMonth", Number(e.target.value))}>
+                {MONTHS_LONG.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+              <div className="fb-stat-sub" style={{ marginTop: 6 }}>
+                Fällig in: {quarterlyDueMonths(p.yearlyMonth).map((m) => MONTHS_SHORT[m - 1]).join(", ")}
               </div>
             </div>
           ) : (
@@ -983,7 +1100,7 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
                 <select className="fb-select" style={{ flex: "1 1 140px", minWidth: 120 }} value={s.person} onChange={(e) => onUpdateSplit(idx, "person", e.target.value)}>
                   {persons.map((pn) => <option key={pn} value={pn}>{pn}</option>)}
                 </select>
-                <input className="fb-input fb-amount" type="number" value={s.amount} onChange={(e) => onUpdateSplit(idx, "amount", e.target.value)} />
+                <input className="fb-input fb-amount" type="number" onFocus={(e) => e.target.select()} value={s.amount} onChange={(e) => onUpdateSplit(idx, "amount", e.target.value)} />
                 <button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={() => onRemoveSplit(idx)}><Trash2 size={13} /></button>
               </div>
             ))}
@@ -995,10 +1112,36 @@ function PositionRow({ p, prevAmt, persons, onUpdate, onToggleFixed, onRemove, o
   );
 }
 
-function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, persistYearBudget, addYear, persons, expenses, reassignExpenses }) {
+function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, persistYearBudget, addYear, persons, expenses, reassignExpenses, householdName }) {
   const [draft, setDraft] = useState(yearBudget);
   const [newYearOpen, setNewYearOpen] = useState(false);
   const [deleteCatModal, setDeleteCatModal] = useState(null);
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  async function handleYearReviewPdf() {
+    setPdfLoading(true);
+    try {
+      const bytes = await generateYearReviewPdf({
+        yearBudget: draft,
+        expenses,
+        year,
+        householdName,
+        computeMonthData,
+        computePositionIst,
+      });
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `jahresuebersicht_${year}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      if (typeof window !== "undefined" && window.alert) window.alert("Jahresübersicht konnte nicht erstellt werden.");
+    } finally {
+      setPdfLoading(false);
+    }
+  }
 
   useEffect(() => setDraft(yearBudget), [yearBudget]);
 
@@ -1162,6 +1305,9 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
           <select className="fb-select" style={{ width: "auto" }} value={year} onChange={(e) => setYear(Number(e.target.value))}>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
           </select>
+          <button className="fb-btn fb-btn-ghost" onClick={handleYearReviewPdf} disabled={pdfLoading}>
+            <Download size={14} /> {pdfLoading ? "Erstelle PDF…" : "Jahresübersicht als PDF"}
+          </button>
           <button className="fb-btn fb-btn-ghost" onClick={resetAllToZero}><RotateCcw size={14} /> Alle Beträge auf 0 setzen</button>
           <button className="fb-btn fb-btn-secondary" onClick={() => setNewYearOpen(true)}>+ Neues Jahr</button>
           <button className="fb-btn" onClick={() => persistYearBudget(draft)}>Speichern</button>
@@ -1196,17 +1342,17 @@ function YearBudgetPage({ yearBudget, prevYearBudget, years, year, setYear, pers
         <div className="fb-grid" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
           <div className="fb-field" style={{ margin: 0 }}>
             <label className="fb-label">Einkünfte 1</label>
-            <input className="fb-input" type="number" value={draft.income.einkuenfte1} onChange={(e) => updateIncome("einkuenfte1", e.target.value)} />
+            <input className="fb-input" type="number" onFocus={(e) => e.target.select()} value={draft.income.einkuenfte1} onChange={(e) => updateIncome("einkuenfte1", e.target.value)} />
             {prevYearBudget && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>Vorjahr: {formatCHF(prevYearBudget.income.einkuenfte1)}</div>}
           </div>
           <div className="fb-field" style={{ margin: 0 }}>
             <label className="fb-label">Einkünfte 2</label>
-            <input className="fb-input" type="number" value={draft.income.einkuenfte2} onChange={(e) => updateIncome("einkuenfte2", e.target.value)} />
+            <input className="fb-input" type="number" onFocus={(e) => e.target.select()} value={draft.income.einkuenfte2} onChange={(e) => updateIncome("einkuenfte2", e.target.value)} />
             {prevYearBudget && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>Vorjahr: {formatCHF(prevYearBudget.income.einkuenfte2)}</div>}
           </div>
           <div className="fb-field" style={{ margin: 0 }}>
             <label className="fb-label">Zusatzeinkünfte</label>
-            <input className="fb-input" type="number" value={draft.income.zusatzeinkuenfte} onChange={(e) => updateIncome("zusatzeinkuenfte", e.target.value)} />
+            <input className="fb-input" type="number" onFocus={(e) => e.target.select()} value={draft.income.zusatzeinkuenfte} onChange={(e) => updateIncome("zusatzeinkuenfte", e.target.value)} />
             {prevYearBudget && <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>Vorjahr: {formatCHF(prevYearBudget.income.zusatzeinkuenfte)}</div>}
           </div>
         </div>
@@ -1373,7 +1519,7 @@ function NewYearModal({ years, currentDraft, onClose, onCreate }) {
         <div className="fb-modal-head"><h3>Neues Jahr anlegen</h3><button className="fb-btn fb-btn-ghost fb-btn-icon" onClick={onClose}><X size={16} /></button></div>
         <div className="fb-field">
           <label className="fb-label">Jahr</label>
-          <input className="fb-input" type="number" value={y} onChange={(e) => setY(Number(e.target.value))} />
+          <input className="fb-input" type="number" onFocus={(e) => e.target.select()} value={y} onChange={(e) => setY(Number(e.target.value))} />
         </div>
         <div className="fb-field">
           <label className="fb-label">Grundlage</label>
@@ -1541,7 +1687,7 @@ function RemindersPage({ reminders, persistReminders }) {
 
 /* ============================== PROFIL / EINSTELLUNGEN ============================== */
 
-function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPersons, expenses, yearBudget, onLogout }) {
+function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPersons, expenses, yearBudget, onLogout, reports, onReportRead }) {
   const [nameDraft, setNameDraft] = useState(householdName || "");
   const [personsDraft, setPersonsDraft] = useState(persons);
   const [members, setMembers] = useState(null);
@@ -1642,6 +1788,19 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
     a.download = `ausgaben_export_${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  const [reportError, setReportError] = useState("");
+  async function handleDownloadReport(report, kind) {
+    setReportError("");
+    try {
+      const path = kind === "summary" ? report.summary_path : report.detail_path;
+      const url = await getReportDownloadUrl(path);
+      window.open(url, "_blank", "noopener,noreferrer");
+      if (!report.is_read) onReportRead(report.id);
+    } catch (err) {
+      setReportError("Download fehlgeschlagen — bitte später erneut versuchen.");
+    }
   }
 
   async function handleDeleteAccount() {
@@ -1760,6 +1919,34 @@ function SettingsPage({ householdName, inviteCode, userEmail, persons, persistPe
       </div>
 
       <div className="fb-card" style={{ marginBottom: 14 }}>
+        <div className="fb-section-title" style={{ marginTop: 0 }}>Monatsberichte</div>
+        <div className="fb-stat-sub" style={{ marginBottom: 10 }}>
+          Wird automatisch am 1. jedes Monats für den abgelaufenen Monat erstellt.
+        </div>
+        {reports.length === 0 ? (
+          <div className="fb-empty">Noch keine Monatsberichte vorhanden.</div>
+        ) : (
+          reports.map((r) => (
+            <div className="fb-sub-row" key={r.id}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {!r.is_read && <span className="fb-notify-dot" style={{ position: "static", border: "none" }} />}
+                <strong style={{ fontSize: 13.5 }}>{MONTHS_LONG[r.month - 1]} {r.year}</strong>
+              </div>
+              <div className="fb-cat-actions">
+                <button className="fb-btn fb-btn-secondary fb-btn-sm" onClick={() => handleDownloadReport(r, "summary")}>
+                  <Download size={13} /> Kurzversion
+                </button>
+                <button className="fb-btn fb-btn-ghost fb-btn-sm" onClick={() => handleDownloadReport(r, "detail")}>
+                  <Download size={13} /> Detailversion
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+        {reportError && <div style={{ color: "var(--negative)", fontSize: 12.5, marginTop: 8 }}>{reportError}</div>}
+      </div>
+
+      <div className="fb-card" style={{ marginBottom: 14 }}>
         <div className="fb-section-title" style={{ marginTop: 0 }}>Daten</div>
         <button className="fb-btn fb-btn-secondary" onClick={exportCsv}><Download size={14} /> Ausgaben als CSV exportieren</button>
       </div>
@@ -1810,6 +1997,7 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
   const [expenses, setExpenses] = useState([]);
   const [persons, setPersons] = useState(DEFAULT_PERSONS);
   const [reminders, setReminders] = useState([]);
+  const [reports, setReports] = useState([]);
   const [view, setView] = useState({ name: "dashboard" });
   const [toast, setToast] = useState("");
   const [expenseModalConfig, setExpenseModalConfig] = useState(null);
@@ -1883,6 +2071,13 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         setReminders([]);
       }
 
+      try {
+        const rep = await listReports();
+        setReports(rep);
+      } catch {
+        setReports([]);
+      }
+
       setLoading(false);
     })();
     // Nur beim allerersten Mount: Jahres-Discovery inkl. Anlegen des aktuellen Jahres.
@@ -1920,6 +2115,12 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         setReminders(r ? JSON.parse(r.value) : []);
       } catch {
         setReminders([]);
+      }
+      try {
+        const rep = await listReports();
+        setReports(rep);
+      } catch {
+        setReports([]);
       }
     })();
   }, [syncVersion]);
@@ -1979,9 +2180,18 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
     } catch { showToast("Speichern fehlgeschlagen"); }
   }
 
+  async function handleReportRead(id) {
+    setReports((prev) => prev.map((r) => (r.id === id ? { ...r, is_read: true } : r)));
+    try { await markReportRead(id); } catch {}
+  }
+
   async function addExpense(exp) {
     try {
-      const inserted = await insertExpense(exp);
+      let receiptPath = null;
+      if (exp.receiptFile) {
+        try { receiptPath = await uploadReceipt(exp.receiptFile); } catch { showToast("Beleg konnte nicht gespeichert werden"); }
+      }
+      const inserted = await insertExpense({ ...exp, receiptPath, receiptHash: receiptPath ? exp.receiptHash : null });
       setExpenses((prev) => [inserted, ...prev]);
       showToast("Ausgabe erfasst");
     } catch { showToast("Speichern fehlgeschlagen"); }
@@ -1989,7 +2199,15 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
 
   async function updateExpense(id, exp) {
     try {
-      const updated = await updateExpenseRow(id, exp);
+      const payload = { ...exp };
+      delete payload.receiptFile;
+      if (exp.receiptFile) {
+        const old = expenses.find((e) => e.id === id)?.receiptPath;
+        payload.receiptPath = await uploadReceipt(exp.receiptFile);
+        payload.receiptHash = exp.receiptHash;
+        if (old) removeReceiptFile(old);
+      }
+      const updated = await updateExpenseRow(id, payload);
       setExpenses((prev) => prev.map((e) => (e.id === id ? updated : e)));
       showToast("Ausgabe aktualisiert");
     } catch { showToast("Aktualisieren fehlgeschlagen"); }
@@ -2019,9 +2237,11 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
 
   async function deleteExpense(id) {
     const prevExpenses = expenses;
+    const receiptPath = expenses.find((e) => e.id === id)?.receiptPath;
     setExpenses((cur) => cur.filter((e) => e.id !== id));
     try {
       await removeExpense(id);
+      removeReceiptFile(receiptPath);
     } catch {
       setExpenses(prevExpenses);
       showToast("Löschen fehlgeschlagen");
@@ -2046,6 +2266,7 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
     { key: "settings", label: "Profil", icon: SettingsIcon },
   ];
   const categoriesActive = ["categories", "categoryDetail", "billing"].includes(view.name);
+  const hasUnreadReports = reports.some((r) => !r.is_read);
 
   if (loading) {
     return (
@@ -2064,8 +2285,9 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         <div className="fb-sidebar-brand"><span className="dot" />Family-Budget</div>
         {navItems.map((n) => (
           <div key={n.key} className={`fb-nav-item ${(n.key === "categories" ? categoriesActive : view.name === n.key) ? "active" : ""}`}
-            onClick={() => setView({ name: n.key })}>
+            onClick={() => setView({ name: n.key })} style={{ position: "relative" }}>
             <n.icon size={16} /> {n.label}
+            {n.key === "settings" && hasUnreadReports && <span className="fb-notify-dot" />}
           </div>
         ))}
         <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid rgba(255,255,255,.12)" }}>
@@ -2095,35 +2317,39 @@ export default function BudgetApp({ householdName, inviteCode, userEmail, onLogo
         )}
         {view.name === "billing" && (
           <Billing catId={view.catId} position={view.position} yearBudget={yearBudget} expenses={expenses} deleteExpense={deleteExpense}
-            openExpenseModal={openExpenseModal}
+            openExpenseModal={openExpenseModal} year={year} month={month}
             goBack={() => (view.position
               ? setView({ name: "categoryDetail", catId: view.catId })
               : setView({ name: "categories" }))} />
         )}
         {view.name === "yearBudget" && (
           <YearBudgetPage yearBudget={yearBudget} prevYearBudget={prevYearBudget} years={years} year={year} setYear={setYear}
-            persistYearBudget={persistYearBudget} addYear={addYear} persons={persons} expenses={expenses} reassignExpenses={reassignExpenses} />
+            persistYearBudget={persistYearBudget} addYear={addYear} persons={persons} expenses={expenses} reassignExpenses={reassignExpenses}
+            householdName={householdName} />
         )}
         {view.name === "reminders" && (
           <RemindersPage reminders={reminders} persistReminders={persistReminders} />
         )}
         {view.name === "settings" && (
           <SettingsPage householdName={householdName} inviteCode={inviteCode} userEmail={userEmail}
-            persons={persons} persistPersons={persistPersons} expenses={expenses} yearBudget={yearBudget} onLogout={onLogout} />
+            persons={persons} persistPersons={persistPersons} expenses={expenses} yearBudget={yearBudget} onLogout={onLogout}
+            reports={reports} onReportRead={handleReportRead} />
         )}
       </main>
 
       <nav className="fb-mobile-nav">
         {navItems.map((n) => (
           <div key={n.key} className={`fb-mobile-nav-item ${(n.key === "categories" ? categoriesActive : view.name === n.key) ? "active" : ""}`}
-            onClick={() => setView({ name: n.key })}>
+            onClick={() => setView({ name: n.key })} style={{ position: "relative" }}>
             <n.icon size={18} /> {n.label}
+            {n.key === "settings" && hasUnreadReports && <span className="fb-notify-dot" style={{ top: 2, right: "28%" }} />}
           </div>
         ))}
       </nav>
 
       {expenseModalConfig && (
         <ExpenseModal
+          expenses={expenses}
           yearBudget={yearBudget}
           persons={persons}
           defaultCategoryId={expenseModalConfig.editing ? expenseModalConfig.editing.categoryId : expenseModalConfig.catId}
